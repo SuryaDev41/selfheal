@@ -1,0 +1,90 @@
+════════════════════════════════════════════════════════════════════════════════
+                    SELFHEAL CLEANUP SUMMARY
+════════════════════════════════════════════════════════════════════════════════
+
+File: selfheal_minimal.zip (47 KB - cleaned & optimized)
+
+════════════════════════════════════════════════════════════════════════════════
+WHAT WAS KEPT (Essential Code & Config)
+════════════════════════════════════════════════════════════════════════════════
+
+✓ src/selfheal/              ← Framework source code
+  ├── cli.py                 ← Command line interface
+  ├── config_loader.py       ← Config loading
+  ├── resolver/              ← Element resolution
+  ├── llm/                   ← OpenAI integration
+  ├── executor/              ← Playwright execution
+  ├── store/                 ← SQLite database
+  ├── telemetry/             ← Logging & metrics
+  ├── verifier/              ← Result verification
+  ├── healing/               ← Element healing
+  ├── prompts/               ← LLM prompts
+  ├── excel_io/              ← Excel I/O
+  └── safety/                ← Security/masking
+
+✓ config/                    ← Configuration files
+  └── apps/
+      └── automationexercise_openai.yaml  ← App config
+
+✓ suites/                    ← Test cases
+  └── tests.xlsx             ← Your test file
+
+✓ data/                      ← Data folder (auto-populated)
+  ├── logs/                  ← Test logs
+  └── store/                 ← SQLite database
+
+✓ requirements.txt           ← Python dependencies
+✓ pyproject.toml             ← Project metadata
+✓ .env                       ← Environment variables (template)
+✓ .gitignore                 ← Git ignore rules
+✓ SETUP.md                   ← Quick setup guide
+
+════════════════════════════════════════════════════════════════════════════════
+WHAT WAS REMOVED (Unnecessary Files)
+════════════════════════════════════════════════════════════════════════════════
+
+✗ .venv/                     ← Virtual environment (too large, recreate locally)
+✗ docs/                      ← Documentation (not needed to run)
+✗ eval/                      ← Evaluation scripts (for assessment only)
+✗ tests/                     ← Unit tests (not needed to run tests)
+✗ README.md                  ← Long README (replaced with SETUP.md)
+✗ requirements_dev.txt       ← Dev dependencies (not needed)
+✗ requirements_minimal.txt   ← Alternative requirements (not needed)
+✗ check_cache.py             ← Utility scripts (not needed)
+✗ init_cache_db.py           ← Utility scripts (not needed)
+✗ inspect_excel.py           ← Utility scripts (not needed)
+✗ INSTALL_OPENAI.sh          ← Installation script (not needed)
+✗ LICENSE                    ← License file (not needed)
+✗ __pycache__/               ← Python cache (auto-recreated)
+✗ *.pyc                      ← Compiled Python (auto-recreated)
+
+════════════════════════════════════════════════════════════════════════════════
+SIZE COMPARISON
+════════════════════════════════════════════════════════════════════════════════
+
+Original selfheal_complete.zip:     ~700 KB (with docs, eval, venv)
+Cleaned selfheal_minimal.zip:       ~47 KB  (code only) ✓
+
+Reduced by: 93% 🎉
+
+════════════════════════════════════════════════════════════════════════════════
+WHAT TO DO NEXT
+════════════════════════════════════════════════════════════════════════════════
+
+1. Download: selfheal_minimal.zip
+2. Extract it
+3. Follow SETUP.md inside
+4. Run: selfheal run suites/tests.xlsx
+
+════════════════════════════════════════════════════════════════════════════════
+NOTE
+════════════════════════════════════════════════════════════════════════════════
+
+The virtual environment (.venv) was excluded because:
+- It's system/OS specific
+- Very large (~500+ MB)
+- Easy to recreate with: pip install -r requirements.txt
+
+Just run "pip install -r requirements.txt" after extracting!
+
+════════════════════════════════════════════════════════════════════════════════
