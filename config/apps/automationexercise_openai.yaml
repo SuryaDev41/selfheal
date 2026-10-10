@@ -1,184 +1,67 @@
-# Self-Healing Test Automation Framework
-# Configuration for automationexercise.com with OpenAI
-# Last Updated: October 2026
+# Browser-test configuration for automationexercise.com.
+# Secrets and test-account details belong in the ignored .env file.
 
 app_name: automationexercise
 
-# LLM Configuration - CHANGED TO OPENAI
-llm:
-  provider: openai  # Changed from: anthropic
-  model: gpt-3.5-turbo  # Recommended: fast and cheap
-  # Alternative models:
-  # - gpt-4-turbo: More capable but more expensive (~$0.021 per element)
-  # - gpt-4o: Latest model, balanced (~$0.010 per element)
-  # - gpt-4: Most powerful (~$0.042 per element) - NOT RECOMMENDED
-  max_retries: 3
-  timeout_seconds: 30
+dashboard:
+  visible: true
 
-# Environments (URLs for testing)
+llm:
+  model: gpt-3.5-turbo
+
 environments:
   prod:
     base_url: https://www.automationexercise.com
     account:
-      email: test1@automationexercise.com
-      password: Test@12345
-    
+      email: ""
+      password: ""
   staging:
     base_url: https://www.automationexercise.com
     account:
-      email: test1@automationexercise.com
-      password: Test@12345
-  
+      email: ""
+      password: ""
   dev:
     base_url: https://www.automationexercise.com
     account:
-      email: test1@automationexercise.com
-      password: Test@12345
+      email: ""
+      password: ""
 
-# Domain allow-list (safety feature)
-# Only these domains are allowed for navigation
-allow_list:
-  - automationexercise.com
-  - www.automationexercise.com
-  - cdn.automationexercise.com
-  - api.automationexercise.com
-  - staging.automationexercise.com
-  - localhost
+registration:
+  default_title: Mr
 
-# Login configuration
-login:
-  method: email_password  # email_password, oauth2, social, custom
-  delay_after_login_ms: 2000  # Wait time after login
-
-# Element resolution settings
+# Semantic Playwright lookup always runs first. This section governs the
+# fallback path: verified locator cache, then an OpenAI locator suggestion.
 resolver:
-  confidence_threshold: 0.85  # Min confidence for AI identification
-  cache_first: true  # Use cache before fallback/AI
-  fallback_enabled: true  # Enable Tier 2 fallback strategies
-  ai_enabled: true  # Enable Tier 3 AI identification
+  ai_enabled: true
+  confidence_threshold: 0.85
 
-# Element fingerprinting settings
-fingerprint:
-  similarity_threshold: 0.80  # Min similarity to consider same element
-  attributes_to_compare:
-    - tag
-    - text
-    - id
-    - class
-    - role
-    - aria_label
-  position_tolerance: 50  # pixels - how much element can move
-
-# Healing configuration
 healing:
   enabled: true
-  auto_approve: false  # Require manual approval of heals
-  max_heals_per_run: 50
+  auto_approve: false
   confidence_threshold: 0.85
-  
-  # Version management
-  keep_history: true
-  max_versions_per_element: 10
+  max_heals_per_run: 50
+  cache_path: data/store/elements.db
 
-# Execution settings
 execution:
-  headless: false  # Run browser in headless mode
-  browser: chromium  # chromium, firefox, webkit
-  timeout_seconds: 30  # Step timeout
-  wait_strategy: smart  # smart, aggressive, passive
+  browser: chromium
+  timeout_seconds: 30
+  delay_between_cases_seconds: 1
   screenshot_on_error: true
   screenshot_on_pass: true
-  
-  # Performance
-  parallel_steps: false
-  max_concurrent_elements: 1
-  
-  # Stability
-  retry_on_failure: true
-  max_retries_per_step: 2
+  blocked_resource_host_suffixes:
+    - googlesyndication.com
+    - doubleclick.net
+    - adtrafficquality.google
+    - fundingchoicesmessages.google.com
 
-# Database settings
-database:
-  type: sqlite
-  path: data/store/elements.db
-  backup_enabled: true
-  wal_mode: true  # Write-Ahead Logging for recovery
-
-# Logging and telemetry
-telemetry:
-  log_level: INFO
-  log_to_file: true
-  log_path: data/logs
-  track_tokens: true
-  track_costs: true
-  
-  # Performance monitoring
-  track_latency: true
-  track_cache_hits: true
-  
-  # Exports
-  export_format: jsonl  # jsonl for per-call, json for aggregated
-  
-  # Masking (PII protection)
-  mask_passwords: true
-  mask_tokens: true
-  mask_credit_cards: true
-  mask_emails: false
-
-# Rate limiting
-rate_limit:
-  enabled: true
-  delay_between_actions_ms: 100
-  delay_between_elements_ms: 50
-  delay_after_error_ms: 500
-
-# Safety and validation
 safety:
-  allow_list_enforced: true
   no_real_payments: true
-  test_accounts_only: true
-  
-  # Masking before sending to LLM
-  mask_before_llm: true
-  
-  # Budget cap per run
-  max_tokens_per_run: 10000
-  max_cost_per_run_usd: 1.00
+  demo_orders:
+    enabled: true
+    hosts:
+      - www.automationexercise.com
+    card_numbers:
+      - "4111111111111111"
 
-# Verification settings
 verification:
-  deterministic_only: true  # Never use LLM for verification
-  match_types:
-    - exact  # Exact text match
-    - substring  # Contains text
-    - keyword  # All keywords present
-    - regex  # Regex pattern
-
-# Performance tuning
-performance:
-  cache_size: 1000  # Elements to keep in memory
-  batch_size: 10  # Elements to process per batch
-  
-  # Request optimization
-  compress_payloads: true
-  enable_caching: true
-
-# Metadata
-metadata:
-  app_name: automationexercise
-  app_url: https://www.automationexercise.com
-  last_updated: 2026-10-03
-  openai_version: "gpt-3.5-turbo (default)"
-  framework_version: "1.0.0"
-  notes: |
-    This configuration uses OpenAI's GPT-3.5 Turbo model for element identification.
-    
-    Cost Comparison (per 100 element identifications):
-    - GPT-3.5 Turbo: ~$0.021 (RECOMMENDED)
-    - GPT-4o: ~$0.050
-    - GPT-4 Turbo: ~$0.21
-    
-    To switch models:
-    1. Edit 'llm.model' above
-    2. Restart framework
-    3. Or: export LLM_PROVIDER=openai && export OPENAI_API_KEY=sk-...
+  max_home_load_seconds: 15

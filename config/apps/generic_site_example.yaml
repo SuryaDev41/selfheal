@@ -1,0 +1,36 @@
+# Copy this file, set the base URL, and define each site's stable locators.
+
+app_name: generic-site
+
+environments:
+  prod:
+    base_url: https://example.com
+    variables:
+      expected_heading: Example Domain
+
+execution:
+  browser: chromium
+  timeout_seconds: 30
+  screenshot_on_pass: true
+  screenshot_on_error: true
+
+resolver:
+  ai_enabled: true
+  confidence_threshold: 0.85
+
+healing:
+  enabled: true
+  auto_approve: false
+  confidence_threshold: 0.85
+  max_heals_per_run: 50
+  cache_path: data/store/elements.db
+
+locators:
+  page_heading:
+    by: role
+    role: heading
+    name: Example Domain
+  more_information:
+    by: role
+    role: link
+    name: More information...

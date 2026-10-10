@@ -1,1 +1,14 @@
 my.venv/
+.env
+.env.openai
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.coverage
+htmlcov/
+data/runs/
+data/store/
+data/logs/
+data/dashboard/
+/%SystemDrive%/

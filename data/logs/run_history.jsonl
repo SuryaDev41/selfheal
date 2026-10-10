@@ -1,2 +1,0 @@
-{"timestamp": "2026-10-06T21:50:40.429085", "run_id": "run_manual", "app": "automationexercise", "suite_name": "tests.xlsx", "total_tokens": 0, "total_cost_usd": 0.0, "llm_calls": 0, "model_usage": {}, "cache_hits": 0, "cache_hit_rate": 0.0, "duration_seconds": 5.0}
-{"timestamp": "2026-10-06T21:51:39.914548", "run_id": "run_manual_2", "app": "automationexercise", "suite_name": "tests.xlsx", "total_tokens": 0, "total_cost_usd": 0.0, "llm_calls": 0, "model_usage": {}, "cache_hits": 0, "cache_hit_rate": 0.0, "duration_seconds": 0.5}

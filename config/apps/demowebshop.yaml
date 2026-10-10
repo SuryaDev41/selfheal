@@ -1,0 +1,71 @@
+# Demo Web Shop profile for the generic, configuration-driven executor.
+# It contains only public page locators and no credentials.
+
+app_name: demowebshop
+
+dashboard:
+  visible: true
+
+environments:
+  prod:
+    base_url: https://demowebshop.tricentis.com
+
+execution:
+  browser: chromium
+  timeout_seconds: 30
+  delay_between_cases_seconds: 0
+  screenshot_on_pass: true
+  screenshot_on_error: true
+
+resolver:
+  ai_enabled: true
+  discovery_mode: ai_first
+  confidence_threshold: 0.85
+
+healing:
+  enabled: true
+  auto_approve: true
+  confidence_threshold: 0.85
+  max_heals_per_run: 50
+  cache_path: data/store/elements.db
+
+locators:
+  home_welcome: text=Welcome to our store
+  register: css=.ico-register
+  login: css=.ico-login
+  shopping_cart: css=#topcartlink a
+  wishlist: css=.header-links .ico-wishlist
+  books_category: css=.block-category-navigation a[href='/books']
+  computers_category: css=.block-category-navigation a[href='/computers']
+  digital_downloads_category: css=.block-category-navigation a[href='/digital-downloads']
+  jewelry_category: css=.block-category-navigation a[href='/jewelry']
+  gift_cards_category: css=.block-category-navigation a[href='/gift-cards']
+  apparel_category: css=.block-category-navigation a[href='/apparel-shoes']
+  registration_gender_male: css=#gender-male
+  registration_first_name: css=#FirstName
+  registration_last_name: css=#LastName
+  registration_email: css=#Email
+  registration_password: css=#Password
+  registration_confirm_password: css=#ConfirmPassword
+  registration_submit: css=#register-button
+  registration_continue: css=.register-continue-button
+  registration_confirmation_error: css=.field-validation-error
+  registration_summary_error: css=.validation-summary-errors
+  login_email: 'css=.login-page #Email'
+  login_password: 'css=.login-page #Password'
+  login_submit: css=.login-page input.login-button
+  login_error: css=.validation-summary-errors
+  account: css=.header-links .account
+  logout: css=.header-links .ico-logout
+  first_book_add_to_cart: css=.product-grid .item-box:first-child .product-box-add-to-cart-button
+  notification: css=#bar-notification
+  cart_quantity: css=.cart .qty-input
+  cart_first_product: text=Computing and Internet
+  search_box: css=#small-searchterms
+  search_submit: css=.search-box-button
+  search_results: css=.search-results
+  searched_computer: text=Build your own computer
+  no_search_results: text=No products were found that matched your criteria.
+  terms_of_service: css=#termsofservice
+  checkout: css=#checkout
+  terms_warning: text=Please accept the terms of service before the next step.
