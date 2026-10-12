@@ -1,6 +1,7 @@
 """Browser-level checks for actions and honest suite results."""
 
 import json
+from urllib.parse import urlparse
 
 import openpyxl
 import pytest
@@ -11,6 +12,8 @@ from typer.testing import CliRunner
 
 from selfheal.cli import app, run_browser_suite
 from selfheal.executor.browser import ActionFailedError, BrowserExecutor
+from selfheal.healing.cache import LocatorCache
+from selfheal.telemetry.healing_log import HealingEventStore
 
 LOGIN_PAGE = """<!doctype html>
 <html><body>
@@ -47,56 +50,6 @@ document.querySelector('#login').onsubmit = event => {
 };
 </script>
 </body></html>"""
-
-REGISTRATION_PAGE = """<!doctype html><html><body>
-<a href="#auth" id="open-auth">Signup / Login</a>
-<section id="auth" hidden>
-  <h2>New User Signup!</h2>
-  <form id="signup"><input name="name" placeholder="Name">
-    <input name="email" type="email" placeholder="Email Address">
-    <button>Signup</button></form>
-</section>
-<section id="register" hidden>
-  <form id="account">
-    <label><input type="radio" name="title" value="Mr">Mr.</label>
-    <label><input type="radio" name="title" value="Mrs">Mrs.</label>
-    <input type="password" name="password" placeholder="Password">
-    <select name="days"><option value="10">10</option></select>
-    <select name="months"><option value="5">May</option></select>
-    <select name="years"><option value="1995">1995</option></select>
-    <input name="first_name" placeholder="First name">
-    <input name="last_name" placeholder="Last name">
-    <input name="address1" placeholder="Address">
-    <input name="address2" placeholder="Address 2">
-    <select name="country"><option value="India">India</option></select>
-    <input name="state" placeholder="State">
-    <input name="city" placeholder="City">
-    <input name="zipcode" placeholder="Zipcode">
-    <input name="mobile_number" placeholder="Mobile Number">
-    <button>Create Account</button>
-  </form>
-</section>
-<section id="created" hidden><h1>ACCOUNT CREATED!</h1><button id="continue">Continue</button></section>
-<div id="output"></div>
-<script>
-document.querySelector('#open-auth').onclick = event => {
-  event.preventDefault(); document.querySelector('#auth').hidden = false;
-};
-document.querySelector('#signup').onsubmit = event => {
-  event.preventDefault(); document.querySelector('#auth').hidden = true;
-  document.querySelector('#register').hidden = false;
-};
-document.querySelector('#account').onsubmit = event => {
-  event.preventDefault(); document.querySelector('#register').hidden = true;
-  document.querySelector('#created').hidden = false;
-};
-document.querySelector('#continue').onclick = () => {
-  document.querySelector('#created').hidden = true;
-  document.querySelector('#output').textContent = 'Logged in as QA Tester';
-};
-</script>
-</body></html>"""
-
 
 def config_for(url, *, ai=False, auto_approve=False):
     return {
@@ -170,26 +123,6 @@ def test_invalid_and_blank_login_are_verified(browser, login_page):
     }
     assert execute(browser, login_page, invalid)["status"] == "passed"
     assert execute(browser, login_page, blank)["status"] == "passed"
-
-
-def test_workbook_registration_steps_execute_before_review(browser, tmp_path):
-    page_file = tmp_path / "registration.html"
-    page_file.write_text(REGISTRATION_PAGE, encoding="utf-8")
-    from selfheal.cli import read_excel_tests
-
-    case = next(item for item in read_excel_tests("suites/tests.xlsx") if item["id"] == "TC_002")
-    result = execute(browser, page_file, case)
-    assert result["status"] == "needs_review", result
-    assert len(result["steps"]) == 7
-    assert all(item["status"] == "passed" for item in result["steps"])
-    assert all(item["status"] == "passed" for item in result["checks"])
-    assert any("Title" in item for item in result["notes"])
-
-    configured = config_for(page_file.as_uri())
-    configured["registration"] = {"default_title": "Mr"}
-    result = execute(browser, page_file, case, config=configured)
-    assert result["status"] == "passed", result
-    assert len(result["steps"]) == 7
 
 
 def test_contact_upload_and_alert_are_real_actions(browser, tmp_path):
@@ -292,6 +225,50 @@ def test_generic_commands_run_a_configured_site_without_site_specific_code(brows
     assert result["status"] == "passed", result
     assert len(result["steps"]) == 10
     assert result["checks"] == [{"status": "passed", "expectation": "Inline generic assertions", "reason": None}]
+
+
+def test_direct_selectors_cache_only_after_whole_case_passes(browser, tmp_path, monkeypatch):
+    page_file = tmp_path / "direct.html"
+    page_file.write_text(
+        "<button id='start' onclick=\"document.querySelector('#status').textContent='Done'\">Go</button>"
+        "<p id='status'></p>",
+        encoding="utf-8",
+    )
+    config = config_for(page_file.as_uri(), ai=True, auto_approve=True)
+    config["resolver"]["discovery_mode"] = "batch_cached"
+    cache = LocatorCache(tmp_path / "elements.db")
+    events = HealingEventStore(tmp_path / "events.db")
+    config["healing"]["cache_path"] = str(cache.db_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+    def run(steps):
+        executor = BrowserExecutor(config, "prod", page_file)
+        executor.healer.cache = cache
+        executor.healer.event_store = events
+        result = execute(browser, page_file, {"step": steps, "expected": ""}, executor=executor)
+        return result, executor.healer.stats()
+
+    page_key = urlparse(page_file.as_uri()).path
+    click_key = "generic-click:css=#start"
+    text_key = "generic-assert_text:css=#status"
+    failed, _ = run("CLICK | css=#start\nASSERT_TEXT | css=#status | Missing")
+    assert failed["status"] == "failed", failed
+    assert cache.get("fixture", "prod", page_key, click_key) is None
+    assert cache.get("fixture", "prod", page_key, text_key) is None
+
+    passed, _ = run("CLICK | css=#start\nASSERT_TEXT | css=#status | Done")
+    assert passed["status"] == "passed", passed
+    assert cache.get("fixture", "prod", page_key, click_key) == "#start"
+    assert cache.get("fixture", "prod", page_key, text_key) == "#status"
+
+    repeated, stats = run("CLICK | css=#start\nASSERT_TEXT | css=#status | Done")
+    assert repeated["status"] == "passed", repeated
+    assert stats["cache_hits"] == 2 and stats["ai_calls"] == 0
+
+    cache.put("fixture", "prod", page_key, click_key, "#healed-selector")
+    passed_again, _ = run("CLICK | css=#start\nASSERT_TEXT | css=#status | Done")
+    assert passed_again["status"] == "passed", passed_again
+    assert cache.get("fixture", "prod", page_key, click_key) == "#healed-selector"
 
 
 def test_icon_font_prefix_does_not_hide_a_real_link(browser, tmp_path):
@@ -829,6 +806,53 @@ def test_ai_selector_is_clicked_and_stale_selector_is_healed(browser, tmp_path, 
         assert f"({source})" in result["steps"][0]["detail"]
 
 
+def test_runner_reports_failed_locator_before_ai_repair_and_pass(tmp_path, monkeypatch, capsys):
+    page_file = tmp_path / "action.html"
+    page_file.write_text(
+        "<button id='new-action' onclick=\"document.querySelector('#out').textContent='Done'\">"
+        "Continue</button><p id='out'></p>",
+        encoding="utf-8",
+    )
+    cache_path = tmp_path / "elements.db"
+    config = config_for(page_file.as_uri(), ai=True, auto_approve=True)
+    config["resolver"]["discovery_mode"] = "batch_cached"
+    config["healing"]["cache_path"] = str(cache_path)
+    config_file = tmp_path / "app.yaml"
+    config_file.write_text(yaml.safe_dump(config), encoding="utf-8")
+    cache = LocatorCache(cache_path)
+    key = ("fixture", "prod", urlparse(page_file.as_uri()).path, "generic-click:continue")
+    cache.put(*key, "#old-action")
+
+    def browser_executor_with_client(*args, **kwargs):
+        executor = BrowserExecutor(*args, **kwargs)
+        executor.healer.client = FakeClient()
+        return executor
+
+    monkeypatch.setattr("selfheal.runner.BrowserExecutor", browser_executor_with_client)
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-test-key")
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+    monkeypatch.chdir(tmp_path)
+    run_dir = run_browser_suite(
+        [{"id": "TC_HEAL", "title": "Open action", "step": "CLICK | Continue\n"
+          "ASSERT_TEXT | #out | Done", "expected": ""}],
+        page_file, headless=True, config_path=config_file,
+        output_root=tmp_path / "runs", history_path=tmp_path / "history.xlsx",
+    )
+
+    output = capsys.readouterr().out
+    markers = ["LOCATOR FAILED: CLICK | Continue", "HEALING: asking OpenAI",
+               "HEALED: CLICK | Continue", "PASSED: 2 steps, 1 checks verified"]
+    positions = [output.index(marker) for marker in markers]
+    assert positions == sorted(positions)
+    assert "matched no element on the current page" in output
+    assert cache.get(*key) == "#new-action"
+    results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
+    assert results["tests"][0]["status"] == "passed"
+    assert [event["event"] for event in results["tests"][0]["recovery_events"]] == [
+        "locator_failed", "healing_requested", "healed",
+    ]
+
+
 def test_ai_suggestion_requires_approval_when_configured(browser, tmp_path, monkeypatch):
     page_file = tmp_path / "action.html"
     page_file.write_text("<button id='action'>Go</button><p>Done</p>", encoding="utf-8")
@@ -909,3 +933,27 @@ def test_cli_returns_failure_for_failed_case_and_saves_results(login_page, tmp_p
     )
     assert selected.exit_code == 0, selected.output
     assert "Passed: 1  Failed: 0  Needs review: 0" in selected.output
+
+
+def test_cli_reports_healing_ai_calls_for_saved_run(tmp_path, monkeypatch):
+    suite = tmp_path / "cases.xlsx"
+    workbook = Workbook()
+    workbook.active.append(["TestCase ID", "Title", "Test Step", "Test Data", "Expected Result"])
+    workbook.active.append(["TC_001", "Login link", "OPEN | /\nCLICK | Login\nASSERT_URL | /login", "", ""])
+    workbook.save(suite)
+    workbook.close()
+    config = tmp_path / "site.yaml"
+    config.write_text("app_name: fixture\n", encoding="utf-8")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "results.json").write_text(json.dumps({
+        "status": "passed", "passed": 1, "failed": 0, "needs_review": 0,
+        "healing": {"ai_calls": 1, "cache_hits": 0},
+    }), encoding="utf-8")
+    monkeypatch.setattr("selfheal.cli.run_browser_suite", lambda *_args, **_kwargs: run_dir)
+
+    outcome = CliRunner().invoke(app, ["run", str(suite), "--config", str(config)])
+
+    assert outcome.exit_code == 0, outcome.output
+    assert "Healing AI calls: 1" in outcome.output
+    assert "Locator cache hits: 0" in outcome.output

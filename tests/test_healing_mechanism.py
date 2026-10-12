@@ -110,12 +110,19 @@ def test_healing_lifecycle_reuses_cache_and_recovers_stale_locator(browser, tmp_
     healed_executor = BrowserExecutor(config, "prod", page_file)
     healed_executor.healer.cache = cache
     healed_executor.healer.client = healed_client
+    progress = []
+    healed_executor.healer.progress_callback = progress.append
 
     healed = _run_case(browser, healed_executor)
     assert healed["status"] == "passed", healed
     assert "(healed)" in healed["steps"][0]["detail"]
     assert len(healed_client.calls) == 1
     assert cache.get("healing-fixture", "prod", page_key, "click:continue") == "#continue-v2"
+    assert [event["event"] for event in progress] == [
+        "locator_failed", "healing_requested", "healed",
+    ]
+    assert progress[0]["reason"] == "matched no element on the current page"
+    assert progress[-1]["selector"] == "#continue-v2"
 
 
 def test_failed_healed_click_is_not_cached(browser, tmp_path, monkeypatch):
@@ -168,11 +175,11 @@ def test_generic_ai_first_discovers_reuses_and_repairs(browser, tmp_path, monkey
             result = executor.run_case(context.new_page(), case)
         finally:
             context.close()
-        return result, executor.healer.stats()
+        return result, executor.healer.stats(), executor.healer.cache_uses
 
     _write_page(page_file, "continue-v1")
     first_client = SuggestedLocatorClient("#continue-v1")
-    first, first_stats = run(first_client)
+    first, first_stats, _ = run(first_client)
     assert first["status"] == "passed", first
     assert "(ai)" in first["steps"][0]["detail"]
     assert first_stats["ai_calls"] == 1
@@ -182,15 +189,19 @@ def test_generic_ai_first_discovers_reuses_and_repairs(browser, tmp_path, monkey
     assert cache.get("healing-fixture", "prod", page_key, cache_key) == "#continue-v1"
 
     monkeypatch.delenv("OPENAI_API_KEY")
-    second, second_stats = run(FailIfCalledClient())
+    second, second_stats, cache_uses = run(FailIfCalledClient())
     assert second["status"] == "passed", second
     assert "(cache)" in second["steps"][0]["detail"]
     assert second_stats == {"ai_calls": 0, "cache_hits": 1, "resolution_attempts": 1}
+    assert cache_uses == [{
+        "page": page_key, "command": "CLICK", "target": "Continue",
+        "selector": "#continue-v1",
+    }]
 
     _write_page(page_file, "continue-v2")
     monkeypatch.setenv("OPENAI_API_KEY", "offline-test-key")
     repair_client = SuggestedLocatorClient("#continue-v2")
-    third, third_stats = run(repair_client)
+    third, third_stats, _ = run(repair_client)
     assert third["status"] == "passed", third
     assert "(healed)" in third["steps"][0]["detail"]
     assert third_stats["ai_calls"] == 1

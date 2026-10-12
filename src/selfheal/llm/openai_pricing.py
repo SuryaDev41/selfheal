@@ -10,6 +10,8 @@ MODEL_PRICES_PER_MILLION_USD: Mapping[str, tuple[float, float]] = {
     "gpt-4": (30.00, 60.00),
     "gpt-4-turbo": (10.00, 30.00),
     "gpt-4o": (5.00, 15.00),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-6-sol": (2.00, 10.00),
 }
 
 

@@ -40,19 +40,25 @@ class LangSmithTracker:
 
         return wrap_openai(client, tracing_extra={"client": self._client})
 
-    def case_context(self, run_id: str, test_case_id: str, environment: str):
+    def case_context(
+        self, run_id: str, test_case_id: str, environment: str,
+        *, app_name: str | None = None,
+    ):
         if not self.enabled:
             return nullcontext()
         from langsmith import tracing_context
 
+        metadata = {
+            "suite_run_id": run_id,
+            "test_case_id": test_case_id,
+            "environment": environment,
+        }
+        if app_name:
+            metadata["app_name"] = app_name
         return tracing_context(
             client=self._client,
             project_name=self.project,
-            metadata={
-                "suite_run_id": run_id,
-                "test_case_id": test_case_id,
-                "environment": environment,
-            },
+            metadata=metadata,
         )
 
     def flush(self) -> None:

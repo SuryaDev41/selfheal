@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,7 @@ def discover_profiles(root: Path | None = None) -> list[dict[str, Any]]:
     """Return valid application profiles from config/apps."""
     root = root or project_root()
     profiles: list[dict[str, Any]] = []
-    for path in sorted((root / "config" / "apps").glob("*.yaml")):
+    for path in sorted((root / "config" / "apps").rglob("*.yaml")):
         try:
             content = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             if not isinstance(content, Mapping):
@@ -59,12 +60,6 @@ def discover_profiles(root: Path | None = None) -> list[dict[str, Any]]:
     return profiles
 
 
-def discover_suites(root: Path | None = None) -> list[Path]:
-    """Return all executable workbook suites."""
-    root = root or project_root()
-    return sorted((root / "suites").glob("*.xlsx"))
-
-
 def _count_step_source(results: Mapping[str, Any], source: str) -> int:
     marker = f"({source})"
     return sum(
@@ -79,7 +74,9 @@ def _count_step_source(results: Mapping[str, Any], source: str) -> int:
 def run_summary(results: Mapping[str, Any], results_file: Path, root: Path) -> dict[str, Any]:
     """Normalize current and legacy results files into one dashboard row."""
     healing = results.get("healing") if isinstance(results.get("healing"), Mapping) else {}
-    ai_calls = int(healing.get("ai_calls", _count_step_source(results, "ai") + _count_step_source(results, "healed")) or 0)
+    ai_calls = int(results.get("llm_calls", healing.get(
+        "ai_calls", _count_step_source(results, "ai") + _count_step_source(results, "healed")
+    )) or 0)
     cache_hits = int(healing.get("cache_hits", _count_step_source(results, "cache")) or 0)
     total = int(results.get("total", 0) or 0)
     passed = int(results.get("passed", 0) or 0)
@@ -129,6 +126,66 @@ def load_run_details(run_id: str, root: Path | None = None) -> dict[str, Any] | 
     return result if isinstance(result, dict) else None
 
 
+def _workspace_xlsx(root: Path, value: object) -> Path | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        path = Path(value)
+        resolved = (path if path.is_absolute() else root / path).resolve(strict=True)
+        resolved.relative_to(root.resolve())
+    except (OSError, ValueError, RuntimeError):
+        return None
+    return resolved if resolved.is_file() and resolved.suffix.lower() == ".xlsx" else None
+
+
+def configured_sites(root: Path | None = None) -> list[dict[str, Any]]:
+    """Expose generated profiles only after a completed browser run with a saved suite."""
+    root = root or project_root()
+    generated_dir = (root / "config" / "apps" / "generated").resolve()
+    profiles = {}
+    for profile in discover_profiles(root):
+        try:
+            path = profile["path"].resolve()
+            path.relative_to(generated_dir)
+            profiles[path] = profile
+        except (OSError, ValueError):
+            continue
+
+    sites = []
+    seen = set()
+    for run in load_runs(root, limit=None):
+        details = load_run_details(run["run_id"], root)
+        if not details or not details.get("finished_at") or details.get("run_error"):
+            continue
+        if not any(case.get("steps") for case in details.get("tests", []) if isinstance(case, dict)):
+            continue
+        discovery = details.get("discovery") or {}
+        profile_value = discovery.get("profile") if isinstance(discovery, Mapping) else None
+        if not isinstance(profile_value, str):
+            continue
+        try:
+            profile_path = Path(profile_value)
+            profile_path = (profile_path if profile_path.is_absolute() else root / profile_path).resolve()
+        except (OSError, ValueError, RuntimeError):
+            continue
+        profile = profiles.get(profile_path)
+        if not profile or profile_path in seen:
+            continue
+        url = profile["environments"].get("prod", "")
+        if not url or url.rstrip("/").casefold() != str(details.get("base_url", "")).rstrip("/").casefold():
+            continue
+        suite = _workspace_xlsx(root, details.get("suite"))
+        if suite is None:
+            continue
+        sites.append({
+            "name": profile["name"], "url": url, "profile": profile_path,
+            "suite": suite, "last_run": run["run_id"], "status": run["status"],
+            "total": run["total"], "passed": run["passed"],
+        })
+        seen.add(profile_path)
+    return sites
+
+
 def _sqlite_rows(db_path: Path, query: str, params: Iterable[Any] = ()) -> list[dict[str, Any]]:
     if not db_path.is_file():
         return []
@@ -140,14 +197,23 @@ def _sqlite_rows(db_path: Path, query: str, params: Iterable[Any] = ()) -> list[
         return []
 
 
-def load_cache_entries(root: Path | None = None, limit: int = 250) -> list[dict[str, Any]]:
+def load_cache_entries(
+    root: Path | None = None, limit: int | None = 250, app: str | None = None,
+) -> list[dict[str, Any]]:
     """Return verified locator cache entries, newest first."""
     root = root or project_root()
+    query = "SELECT app, env, page, target, locator, created_at FROM elements"
+    params: list[Any] = []
+    if app is not None:
+        query += " WHERE app = ?"
+        params.append(app)
+    query += " ORDER BY created_at DESC"
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
     entries = _sqlite_rows(
         root / "data" / "store" / "elements.db",
-        """SELECT app, env, page, target, locator, created_at
-           FROM elements ORDER BY created_at DESC LIMIT ?""",
-        (limit,),
+        query, params,
     )
     for entry in entries:
         entry["created_at"] = format_ist(entry.get("created_at"), assume_utc=True)
@@ -198,6 +264,27 @@ def langsmith_settings(root: Path | None = None) -> tuple[str | None, str | None
     return os.getenv("LANGSMITH_PROJECT", "").strip() or "selfheal", None
 
 
+def langsmith_history_cutoff(root: Path | None = None) -> datetime | None:
+    """Return the earliest LangSmith trace time shown in this dashboard."""
+    root = root or project_root()
+    path = root / "data" / "dashboard" / "langsmith_history_cutoff.txt"
+    try:
+        cutoff = datetime.fromisoformat(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return cutoff.astimezone(UTC) if cutoff.tzinfo else None
+
+
+def clear_langsmith_history(root: Path | None = None) -> datetime:
+    """Hide earlier remote traces in the UI without deleting them in LangSmith."""
+    root = root or project_root()
+    path = root / "data" / "dashboard" / "langsmith_history_cutoff.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cutoff = datetime.now(UTC)
+    path.write_text(cutoff.isoformat(), encoding="utf-8")
+    return cutoff
+
+
 def _run_value(run: Any, name: str, default: Any = None) -> Any:
     if isinstance(run, Mapping):
         return run.get(name, default)
@@ -223,7 +310,11 @@ def load_langsmith_runs(
     }
     client = Client(api_key=os.environ["LANGSMITH_API_KEY"])
     records: list[dict[str, Any]] = []
-    for run in client.list_runs(project_name=project, run_type="llm", limit=limit):
+    query = {"project_name": project, "run_type": "llm", "limit": limit}
+    cutoff = langsmith_history_cutoff(root)
+    if cutoff is not None:
+        query["start_time"] = cutoff
+    for run in client.list_runs(**query):
         extra = _run_value(run, "extra", {}) or {}
         metadata = extra.get("metadata", {}) if isinstance(extra, Mapping) else {}
         serialized = _run_value(run, "serialized", {}) or {}

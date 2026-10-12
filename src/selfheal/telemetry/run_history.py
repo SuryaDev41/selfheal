@@ -75,6 +75,8 @@ def _apply_sheet_layout(sheet) -> None:
 def _update_table_range(sheet) -> None:
     last_column = get_column_letter(len(HEADERS))
     sheet.auto_filter.ref = f"A1:{last_column}{max(1, sheet.max_row)}"
+    if sheet.max_row < 2:
+        return
     for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row):
         for cell in row:
             cell.alignment = Alignment(vertical="center")
@@ -133,6 +135,8 @@ def _legacy_rows(path: Path) -> list[tuple[Any, ...]]:
 def _result_row(results: dict[str, Any], config: dict[str, Any], run_dir: Path) -> tuple[Any, ...]:
     tracing = results.get("langsmith_tracing") or {}
     healing = results.get("healing") or {}
+    cache_hits = int(healing.get("cache_hits", 0) or 0)
+    attempts = int(healing.get("resolution_attempts", 0) or 0)
     return (
         results.get("run_id"),
         _parse_timestamp(results.get("started_at")),
@@ -148,14 +152,12 @@ def _result_row(results: dict[str, Any], config: dict[str, Any], run_dir: Path) 
         results.get("failed"),
         results.get("needs_review"),
         results.get("status"),
-        healing.get("ai_calls"),
-        healing.get("cache_hits"),
-        (healing.get("cache_hits", 0) / healing["resolution_attempts"])
-        if healing.get("resolution_attempts")
-        else 0,
+        results.get("llm_calls", healing.get("ai_calls")),
         None,
         None,
         None,
+        cache_hits,
+        cache_hits / attempts if attempts else 0,
         tracing.get("project") if tracing.get("enabled") else None,
         str(run_dir / "results.json"),
         results.get("run_error"),
@@ -190,6 +192,58 @@ def _new_workbook(legacy_path: Path, results_root: Path | None, config: dict[str
     return workbook
 
 
+def _repair_history_sheet(sheet, results_root: Path) -> int:
+    """Move cache metrics that older releases wrote under token/cost columns."""
+    repaired = 0
+    for row in range(2, sheet.max_row + 1):
+        run_id = sheet.cell(row=row, column=1).value
+        if not isinstance(run_id, str) or Path(run_id).name != run_id:
+            continue
+        if sheet.cell(row=row, column=19).value is not None:
+            continue
+        results_file = results_root / run_id / "results.json"
+        try:
+            results = json.loads(results_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        healing = results.get("healing") or {}
+        cache_hits = int(healing.get("cache_hits", 0) or 0)
+        old_attempts = int(healing.get("resolution_attempts", 0) or 0)
+        old_rate = cache_hits / old_attempts if old_attempts else 0
+        misplaced_hits = sheet.cell(row=row, column=16).value
+        misplaced_rate = sheet.cell(row=row, column=17).value
+        if misplaced_hits != cache_hits or not isinstance(misplaced_rate, (int, float)):
+            continue
+        if abs(float(misplaced_rate) - old_rate) > 1e-9:
+            continue
+        runtime_attempts = max(0, old_attempts - int(
+            (results.get("discovery") or {}).get("api_calls", 0) or 0
+        ))
+        sheet.cell(row=row, column=16).value = None
+        sheet.cell(row=row, column=17).value = None
+        sheet.cell(row=row, column=19).value = cache_hits
+        sheet.cell(row=row, column=20).value = (
+            cache_hits / runtime_attempts if runtime_attempts else 0
+        )
+        repaired += 1
+    return repaired
+
+
+def repair_run_history(
+    history_path: str | Path = DEFAULT_HISTORY_PATH,
+    results_root: str | Path = Path("data/runs"),
+) -> int:
+    """Repair cache columns in an existing history workbook using saved results."""
+    path = Path(history_path)
+    if not path.is_file():
+        return 0
+    workbook = load_workbook(path)
+    repaired = _repair_history_sheet(workbook[SHEET_NAME], Path(results_root))
+    if repaired:
+        workbook.save(path)
+    return repaired
+
+
 def append_run_history(
     results: dict[str, Any],
     config: dict[str, Any],
@@ -212,6 +266,8 @@ def append_run_history(
         )
     )
     sheet = workbook[SHEET_NAME]
+    if results_root is not None:
+        _repair_history_sheet(sheet, Path(results_root))
     run_id = results.get("run_id")
     known_run_ids = {sheet.cell(row=row, column=1).value for row in range(2, sheet.max_row + 1)}
     if run_id not in known_run_ids:

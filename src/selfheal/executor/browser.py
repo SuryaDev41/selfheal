@@ -27,6 +27,11 @@ def parse_test_data(raw: object) -> dict[str, str]:
         if ":" in line:
             key, value = line.split(":", 1)
             values[key.strip().lower()] = value.strip()
+    if "name" in values:
+        parts = values["name"].split(maxsplit=1)
+        if len(parts) == 2:
+            values.setdefault("first_name", parts[0])
+            values.setdefault("last_name", parts[1])
     return values
 
 
@@ -316,7 +321,7 @@ class BrowserExecutor:
         if key not in data:
             raise UnsupportedStepError(f"Test Data is missing {field}")
         value = data[key]
-        if re.fullmatch(r"<[^>]+>", value) or (not value and "empty" not in step.lower()):
+        if re.search(r"<[^>]+>", value) or (not value and "empty" not in step.lower()):
             raise UnsupportedStepError(f"Test Data for {field} needs a real value")
         return value
 
@@ -1410,6 +1415,10 @@ class BrowserExecutor:
         except Exception as exc:
             result["status"] = "failed"
             result["error"] = str(exc)
+        if result["status"] == "passed" and not test_case.get("conversion_note"):
+            self.generic.commit_passed_locators()
+        else:
+            self.generic.discard_pending_locators()
         result["url"] = page.url if not page.is_closed() else None
         if self.review_notes:
             result["notes"] = self.review_notes.copy()

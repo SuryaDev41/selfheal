@@ -4,6 +4,9 @@ my.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest_work*/
+.ruff_cache/
+.uv_cache/
 *.egg-info/
 .coverage
 htmlcov/
@@ -11,4 +14,10 @@ data/runs/
 data/store/
 data/logs/
 data/dashboard/
+data/uploads/
+data/converted/
+data/archive/
+config/apps/generated/
+suites/automationexercise_ready.xlsx
+suites/converted/
 /%SystemDrive%/

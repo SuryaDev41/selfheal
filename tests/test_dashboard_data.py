@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 
 import langsmith
+from openpyxl import Workbook
 
 from selfheal.dashboard.data import (
     clear_cache_entries,
+    configured_sites,
     discover_profiles,
     load_cache_entries,
     load_healing_events,
@@ -67,6 +69,44 @@ def test_dashboard_discovers_profiles_and_run_data(tmp_path):
     assert load_run_details("../outside", tmp_path) is None
 
 
+def test_configured_sites_require_finished_run_and_saved_suite(tmp_path):
+    profile = tmp_path / "config" / "apps" / "generated" / "example.yaml"
+    profile.parent.mkdir(parents=True)
+    profile.write_text(
+        "app_name: example\ndashboard:\n  visible: true\nenvironments:\n"
+        "  prod:\n    base_url: https://example.test\n", encoding="utf-8",
+    )
+    suite = tmp_path / "suites" / "converted" / "example.xlsx"
+    suite.parent.mkdir(parents=True)
+    book = Workbook()
+    book.active.append(["TestCase ID", "Title", "Test Step", "Test Data", "Expected Result"])
+    book.active.append(["TC_001", "Home", "OPEN | /\nASSERT_URL | /", "", ""])
+    book.save(suite)
+    book.close()
+    run_dir = tmp_path / "data" / "runs" / "run_20260101_120000_000001"
+    run_dir.mkdir(parents=True)
+    results = {
+        "run_id": run_dir.name, "started_at": "2026-01-01T12:00:00",
+        "status": "passed", "suite": str(suite), "environment": "prod",
+        "base_url": "https://example.test", "total": 1, "passed": 1,
+        "discovery": {"profile": str(profile), "api_calls": 1},
+        "tests": [{"id": "TC_001", "steps": [{"status": "passed"}]}],
+    }
+    results_file = run_dir / "results.json"
+    results_file.write_text(json.dumps(results), encoding="utf-8")
+    assert configured_sites(tmp_path) == []
+
+    results["finished_at"] = "2026-01-01T12:01:00"
+    results_file.write_text(json.dumps(results), encoding="utf-8")
+    sites = configured_sites(tmp_path)
+    assert len(sites) == 1
+    assert sites[0]["suite"] == suite
+    assert sites[0]["profile"] == profile
+
+    suite.unlink()
+    assert configured_sites(tmp_path) == []
+
+
 def test_dashboard_reads_cache_and_healing_events(tmp_path):
     cache_path = tmp_path / "data" / "store" / "elements.db"
     cache_path.parent.mkdir(parents=True)
@@ -96,6 +136,8 @@ def test_dashboard_reads_cache_and_healing_events(tmp_path):
     )
 
     assert load_cache_entries(tmp_path)[0]["locator"] == "#save"
+    assert load_cache_entries(tmp_path, limit=None, app="example")[0]["locator"] == "#save"
+    assert load_cache_entries(tmp_path, limit=None, app="other") == []
     assert load_healing_events(tmp_path)[0]["event_type"] == "cache_hit"
     assert clear_cache_entries(tmp_path, "example") == 1
     assert load_cache_entries(tmp_path) == []

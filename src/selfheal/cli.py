@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 import typer
 
-from .config import DEFAULT_CONFIG, load_environment
+from .config import load_environment
 from .runner import run_browser_suite as _run_browser_suite
 from .suite_loader import read_excel_tests
 from .telemetry import LangSmithTracker, get_total_usage, init_local_store
@@ -27,30 +27,82 @@ def run_browser_suite(*args: Any, **kwargs: Any) -> Path:
 def run(
     suite: Annotated[Path, typer.Argument(help="Path to test suite Excel file")],
     env: Annotated[str, typer.Option(help="Configured environment")] = "prod",
-    config: Annotated[Path, typer.Option(help="App YAML config")] = DEFAULT_CONFIG,
+    config: Annotated[Path | None, typer.Option(help="App YAML config; required for manual runs")] = None,
     headless: Annotated[bool, typer.Option(help="Run browser without a visible window")] = False,
     verbose: Annotated[bool, typer.Option(help="Print each executed step")] = False,
     case: Annotated[list[str] | None, typer.Option("--case", help="TestCase ID to run; repeat for more IDs")] = None,
 ) -> None:
     """Execute spreadsheet tests in a real browser."""
     try:
+        if config is None:
+            raise ValueError("Use 'onboard URL SUITE' or pass --config for a manual run")
         if not suite.is_file():
             raise FileNotFoundError(f"Test suite not found: {suite}")
         tests = read_excel_tests(suite)
+
+        from .suite_converter import review_cases
+
+        reviews = review_cases(suite)
         if case:
             selected = {item.casefold() for item in case}
-            enabled = {item["id"].casefold() for item in tests}
-            unknown = selected - enabled
+            available = {item["id"].casefold() for item in [*tests, *reviews]}
+            unknown = selected - available
             if unknown:
-                raise ValueError("Unknown or disabled TestCase ID: " + ", ".join(sorted(unknown)))
+                raise ValueError("Unknown TestCase ID: " + ", ".join(sorted(unknown)))
             tests = [item for item in tests if item["id"].casefold() in selected]
-        if not tests:
-            raise ValueError("No test cases are enabled in the suite")
-        run_dir = run_browser_suite(tests, suite, env, headless, config, verbose)
+            reviews = [item for item in reviews if item["id"].casefold() in selected]
+        if not tests and not reviews:
+            raise ValueError("No test cases are available in the suite")
+        run_dir = run_browser_suite(tests, suite, env, headless, config, verbose, review_cases=reviews)
         results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError, ImportError) as exc:
         typer.echo(f"Cannot run suite: {exc}", err=True)
         raise typer.Exit(1) from exc
+    typer.echo(f"Healing AI calls: {results.get('healing', {}).get('ai_calls', 0)}")
+    typer.echo(f"Locator cache hits: {results.get('healing', {}).get('cache_hits', 0)}")
+    typer.echo(f"Results: {run_dir / 'results.json'}")
+    typer.echo(
+        f"Passed: {results['passed']}  Failed: {results['failed']}  "
+        f"Needs review: {results['needs_review']}"
+    )
+    if results["status"] != "passed":
+        raise typer.Exit(1)
+
+
+@app.command()
+def onboard(
+    url: Annotated[str, typer.Argument(help="New website origin, for example https://example.com")],
+    suite: Annotated[Path, typer.Argument(help="XLSX test suite with commands or prose cases")],
+    headless: Annotated[bool, typer.Option(help="Run the test browser without a window")] = False,
+    allow_site_actions: Annotated[
+        bool, typer.Option(help="Authorize uploaded credentials, files, and account/order actions on this test site")
+    ] = False,
+    retry_reviewed: Annotated[
+        bool, typer.Option("--retry-reviewed", help="Regenerate only reviewed cases from the original workbook")
+    ] = False,
+    review_upload: Annotated[
+        bool, typer.Option("--review-upload", help="Review the entire workbook once with OpenAI on every run")
+    ] = False,
+) -> None:
+    """Convert prose if needed, discover locators once, then run the suite."""
+    from .onboarding import run_new_site
+
+    root = Path(__file__).resolve().parents[2]
+    try:
+        run_dir = run_new_site(
+            url, suite, root=root, headless=headless, allow_site_actions=allow_site_actions,
+            retry_reviewed_cases=retry_reviewed, review_upload=review_upload,
+        )
+        results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        typer.echo(f"Cannot onboard website: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Profile: {results['discovery']['profile']}")
+    if Path(results["suite"]) != suite:
+        typer.echo(f"Converted suite: {results['suite']}")
+    typer.echo(f"Conversion API calls: {results.get('conversion', {}).get('api_calls', 0)}")
+    typer.echo(f"Healing AI calls: {results['healing']['ai_calls']}")
+    typer.echo(f"Locator cache hits: {results['healing']['cache_hits']}")
     typer.echo(f"Results: {run_dir / 'results.json'}")
     typer.echo(
         f"Passed: {results['passed']}  Failed: {results['failed']}  "

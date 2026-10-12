@@ -12,8 +12,8 @@ def test_dashboard_history_records_launch_and_completion(tmp_path):
         {
             "launch_id": "launch_001",
             "started_at": now_ist(),
-            "website": "demowebshop",
-            "suite": "demowebshop_full.xlsx",
+            "website": "site-one",
+            "suite": "uploaded.xlsx",
             "environment": "prod",
             "headless": True,
             "cases": ["TC_001"],

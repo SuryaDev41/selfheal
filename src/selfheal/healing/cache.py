@@ -73,6 +73,66 @@ class LocatorCache:
         except sqlite3.Error:
             LOGGER.warning("Could not save to the locator cache", exc_info=True)
 
+    def put_missing(
+        self, app: str, environment: str, entries: list[tuple[str, str, str]],
+    ) -> None:
+        """Save passed-case selectors without replacing discovered or healed entries."""
+        if not entries:
+            return
+        try:
+            with self._connect() as connection:
+                connection.executemany(
+                    """INSERT OR IGNORE INTO elements
+                       (app, env, page, target, locator, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    [
+                        (app, environment, page, target, selector, now_ist().isoformat())
+                        for page, target, selector in entries
+                    ],
+                )
+        except sqlite3.Error:
+            LOGGER.warning("Could not save passed-case locators", exc_info=True)
+
+    def replace_app(
+        self, app: str, environment: str, entries: list[tuple[str, str, str]],
+    ) -> None:
+        """Atomically replace a site's discovery selectors after revalidation."""
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    "DELETE FROM elements WHERE app = ? AND env = ?", (app, environment)
+                )
+                connection.executemany(
+                    """INSERT INTO elements (app, env, page, target, locator, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    [
+                        (app, environment, page, target, selector, now_ist().isoformat())
+                        for page, target, selector in entries
+                    ],
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Could not persist the discovered locator cache") from exc
+
+    def merge_app(
+        self, app: str, environment: str, entries: list[tuple[str, str, str]],
+    ) -> None:
+        """Atomically add verified selectors without removing other suite targets."""
+        try:
+            with self._connect() as connection:
+                connection.executemany(
+                    """INSERT INTO elements (app, env, page, target, locator, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(app, env, page, target)
+                       DO UPDATE SET locator = excluded.locator,
+                                     created_at = excluded.created_at""",
+                    [
+                        (app, environment, page, target, selector, now_ist().isoformat())
+                        for page, target, selector in entries
+                    ],
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Could not persist the discovered locator cache") from exc
+
     def clear(self, app: str | None = None) -> None:
         """Clear cache entries for one application or every application."""
         try:

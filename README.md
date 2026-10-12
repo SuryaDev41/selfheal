@@ -1,49 +1,40 @@
-# Selfheal
+# SelfHeal
 
-Selfheal runs spreadsheet-driven browser tests with Playwright. It uses semantic
-Playwright locators first and can recover a broken selector through a verified
-SQLite cache and OpenAI fallback.
+SelfHeal runs spreadsheet test cases against websites in a real Playwright browser. The dashboard accepts a website URL and an XLSX workbook; it can review natural-language cases with OpenAI, create a separate executable copy, discover page locators, and reuse verified selectors on later runs. A test passes only when its browser steps and assertions succeed.
 
-## Quick Start
+## Start
+
+From the project folder in PowerShell (Python 3.11 or newer):
 
 ```powershell
+python -m venv my.venv
 .\my.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
 python -m pip install -e .
 python -m playwright install chromium
-selfheal doctor
-python -m selfheal.cli run suites/tests.xlsx --env prod
+python -m selfheal.cli doctor
+python -m streamlit run src/selfheal/dashboard/app.py
 ```
 
-Keep credentials and API keys in the ignored `.env` file. See `SETUP.md` for
-account setup, LangSmith tracing, and safe demo-order requirements.
+Put `OPENAI_API_KEY` in the Git-ignored `.env` file before onboarding a site. Open the URL printed by Streamlit, usually `http://localhost:8501`. Enter the website **origin** (for example, `https://example.com`), upload an `.xlsx` file, and click **Discover and Run**. The test browser is visible by default. See [SETUP.md](SETUP.md) for workbook format, CLI commands, and troubleshooting.
 
-## Project Layout
+## How Runs Work
 
-```text
-config/apps/       Application and execution settings
-suites/            Spreadsheet suites and local upload fixtures
-src/selfheal/
-  config.py        Environment and YAML configuration loading
-  suite_loader.py  Excel workbook parsing
-  runner.py        Browser suite orchestration and result files
-  executor/        Spreadsheet-step execution in Playwright
-  healing/         Locator cache and AI selector recovery
-  llm/             OpenAI integration and provider helpers
-  telemetry/       LangSmith tracing and local fallback totals
-tests/             Offline browser, healing, and telemetry tests
-```
+1. **Upload review:** Each dashboard **Discover and Run** starts one workbook-level OpenAI review/conversion request. The upload stays unchanged. A separate copy with executable steps and review notes is saved under `suites/converted/`.
+2. **Locator discovery:** The framework inspects rendered pages, asks OpenAI for missing locators when needed, validates suggested selectors in the browser, and saves a site profile under `config/apps/generated/` and selectors in `data/store/elements.db`.
+3. **Execution:** Playwright runs each case in a fresh browser context. Failed or stale locators may trigger a separate healing call; a repair is cached only after the browser action or assertion succeeds. An assertion mismatch is not healed into a pass.
+4. **Repeat runs:** **Discover and Run** reviews the uploaded workbook again but reuses valid cached selectors. After a completed browser run, **Configured Websites > Rerun Saved Suite** runs the saved copy without another upload review. It can still heal a stale locator.
 
-## Healing Lifecycle
+OpenAI calls are conditional: discovery can be zero when selectors are already cached, and healing can be zero when none fail. Direct selectors can also execute without a cache hit. `PASSED` means the executable checks succeeded; `FAILED` means a browser action or assertion failed; `NEEDS_REVIEW` means the case could not be fully and reliably verified. A review case is never counted as passed.
 
-1. By default, the runner tries configured or semantic Playwright locators,
-   then a verified SQLite cache entry, then the configured OpenAI model.
-2. With `resolver.discovery_mode: ai_first`, actionable targets use the cache
-   first and call the model on a cache miss or stale selector, before trying
-   configured or semantic locators. DemoWebShop uses this mode.
-3. An AI selector must be unique, visible, and above the confidence threshold.
-   It is cached only after approval and a successful browser action.
-4. Assertions are evaluated against the real browser state, never AI output.
+## Project Map
 
-`healing.auto_approve` is `false` by default. This reports a new AI selector
-for review rather than automatically using it on a live site.
+| Path | Purpose |
+| --- | --- |
+| `src/selfheal/dashboard/` | Streamlit UI, run history, and cache views |
+| `src/selfheal/onboarding.py`, `suite_converter.py` | New-site discovery and workbook conversion |
+| `src/selfheal/executor/`, `healing/` | Browser actions, locator resolution, and cache |
+| `src/selfheal/llm/`, `telemetry/` | OpenAI requests and optional LangSmith tracing |
+| `tests/` | Framework regression tests |
+| `data/`, `suites/converted/`, `config/apps/generated/` | Runtime-generated uploads, runs, histories, cache, and profiles (Git-ignored) |
+
+The repository does not require a bundled website profile. Clearing generated data removes saved suites, profiles, history, and locator cache; onboard the site again to restore them. Keep credentials out of tracked files.
